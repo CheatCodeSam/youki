@@ -264,11 +264,16 @@ fn apply_cgroups<
     resources: Option<&LinuxResources>,
     init: bool,
 ) -> Result<()> {
+    // For systemd cgroups, we don't add the intermediate process to the cgroup
+    // The systemd unit will be created but we'll skip adding the process
+    // The init process will be added later in the main process
+    // This prevents the race condition where systemd tries to manage a short-lived intermediate process
+    
     let pid = Pid::from_raw(Process::myself()?.pid());
-    cmanager.add_task(pid).map_err(|err| {
-        tracing::error!(?pid, ?err, ?init, "failed to add task to cgroup");
-        IntermediateProcessError::Cgroup(err.to_string())
-    })?;
+    
+    // Don't add the intermediate process to cgroups - it will exit soon
+    // The main process will add the init process to the cgroup after it's forked
+    tracing::debug!("Skipping cgroup task addition for intermediate process, init process will be added later");
 
     if let Some(resources) = resources {
         if init {

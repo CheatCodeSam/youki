@@ -1,5 +1,6 @@
 use nix::sys::wait::{WaitStatus, waitpid};
 use nix::unistd::Pid;
+use libcgroups::common::CgroupManager;
 
 use crate::process::args::ContainerArgs;
 use crate::process::fork::{self, CloneCb};
@@ -167,6 +168,25 @@ pub fn container_main_process(container_args: &ContainerArgs) -> Result<(Pid, bo
     })?;
 
     tracing::debug!("init pid is {:?}", init_pid);
+
+    // Add the init process to the cgroup now that it's been created
+    let config = &container_args.cgroup_config;
+    if config.systemd_cgroup {
+        let cgroup_manager = libcgroups::common::create_cgroup_manager(config.clone())
+            .map_err(|err| {
+                tracing::error!("failed to create cgroup manager to add init process: {}", err);
+                ProcessError::SyscallOther(crate::syscall::SyscallError::IO(
+                    std::io::Error::new(std::io::ErrorKind::Other, err.to_string())
+                ))
+            })?;
+        
+        cgroup_manager.add_task(init_pid).map_err(|err| {
+            tracing::error!(?init_pid, "failed to add init process to cgroup: {}", err);
+            ProcessError::SyscallOther(crate::syscall::SyscallError::IO(
+                std::io::Error::new(std::io::ErrorKind::Other, err.to_string())
+            ))
+        })?;
+    }
 
     // Close the receiver ends to avoid leaking file descriptors.
 
